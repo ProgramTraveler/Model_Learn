@@ -109,13 +109,87 @@ def main():
     # 类别数量由 ImageFolder 读取到的文件夹数量决定。
     model = create_model(number_of_classes=len(class_names))
 
-    # 目前只测试前向传播，不需要记录梯度。
-    with torch.no_grad():
-        batch_scores = model(batch_images)
+    # SGD 根据参数的梯度更新模型；学习率决定每次更新的步长。
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+
+    # 清除可能保留的旧梯度。本例只运行一次，仍按标准训练顺序书写。
+    optimizer.zero_grad()
+
+    # 保存更新前的分类层权重，稍后检查整层是否发生变化。
+    weights_before = model[4].weight.detach().clone()
+
+    # 为反向传播保留计算过程，因此这里不能使用 torch.no_grad()。
+    batch_scores = model(batch_images)
+
+    # 交叉熵损失比较原始类别分数与正确标签。
+    # 它会在内部处理概率，因此这里不要先调用 softmax。
+    loss_function = nn.CrossEntropyLoss()
+    batch_loss = loss_function(batch_scores, batch_labels)
 
     print("模型结构：")
     print(model)
     print("模型输出的类别分数形状：", batch_scores.shape)
+    print("这个批次的正确标签：", batch_labels)
+    print("这个批次的平均 loss：", batch_loss.item())
+
+    # 下标 0 指同一个批次中的第一张图片。
+    # 它的三个分数和正确标签必须按相同下标配对。
+    first_scores = batch_scores[0]
+    first_label = batch_labels[0].item()
+    first_prediction = first_scores.argmax().item()
+
+    print("第一张图片的类别分数：", first_scores)
+    print("第一张图片的预测类别：", class_names[first_prediction])
+    print("第一张图片的正确类别：", class_names[first_label])
+
+    # 从 loss 反向计算每个可训练参数的梯度。
+    # 这一步只计算调整方向；还没有改变模型参数。
+    batch_loss.backward()
+
+    # 第 0 层是卷积层，第 4 层是最终分类层。
+    print("卷积层权重的梯度形状：", model[0].weight.grad.shape)
+    print("分类层权重的梯度形状：", model[4].weight.grad.shape)
+
+    # 根据刚算出的梯度更新全部可训练参数；当前只更新一次。
+    optimizer.step()
+
+    # 单个权重可能因对应梯度为 0 而不变，所以比较整层最大变化量。
+    largest_weight_change = (
+        model[4].weight.detach() - weights_before
+    ).abs().max().item()
+
+    print("分类层权重的最大变化量：", largest_weight_change)
+
+    # 用更新后的模型重新预测同一批图片，以便比较更新前后的 loss。
+    # 这里只检查结果，不需要记录梯度。
+    with torch.no_grad():
+        updated_scores = model(batch_images)
+        updated_loss = loss_function(updated_scores, batch_labels)
+
+    print("更新前 loss：", batch_loss.item())
+    print("更新后 loss：", updated_loss.item())
+
+    # 上面只演示了一个批次的一次更新；下面完整遍历训练集一轮。
+    # 一轮（epoch）指每个训练批次都被读取一次。
+    model.train()
+    for batch_index, (training_images, training_labels) in enumerate(
+        train_loader, start=1
+    ):
+        # 每个批次开始前清除上一批次留下的梯度。
+        optimizer.zero_grad()
+
+        # 预测当前批次，并与正确标签比较。
+        training_scores = model(training_images)
+        training_loss = loss_function(training_scores, training_labels)
+
+        # 先计算梯度，再用梯度更新模型参数。
+        training_loss.backward()
+        optimizer.step()
+
+        print(
+            f"第 {batch_index}/{len(train_loader)} 批，"
+            f"更新前 loss：{training_loss.item():.4f}"
+        )
 
 
 # 只有直接运行 python src/train.py 时才调用 main()。
