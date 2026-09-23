@@ -154,9 +154,8 @@ def main():
     optimizer.step()
 
     # 单个权重可能因对应梯度为 0 而不变，所以比较整层最大变化量。
-    largest_weight_change = (
-        model[4].weight.detach() - weights_before
-    ).abs().max().item()
+    largest_weight_change = (model[4].weight.detach() -
+                             weights_before).abs().max().item()
 
     print("分类层权重的最大变化量：", largest_weight_change)
 
