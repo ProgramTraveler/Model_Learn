@@ -171,9 +171,13 @@ def main():
     # 上面只演示了一个批次的一次更新；下面完整遍历训练集一轮。
     # 一轮（epoch）指每个训练批次都被读取一次。
     model.train()
-    for batch_index, (training_images, training_labels) in enumerate(
-        train_loader, start=1
-    ):
+
+    # 累加这一轮所有样本的 loss，最后计算整轮的平均 loss。
+    total_training_loss = 0.0
+    total_training_samples = 0
+
+    for batch_index, (training_images,
+                      training_labels) in enumerate(train_loader, start=1):
         # 每个批次开始前清除上一批次留下的梯度。
         optimizer.zero_grad()
 
@@ -185,10 +189,48 @@ def main():
         training_loss.backward()
         optimizer.step()
 
-        print(
-            f"第 {batch_index}/{len(train_loader)} 批，"
-            f"更新前 loss：{training_loss.item():.4f}"
-        )
+        # CrossEntropyLoss 默认给出当前批次的平均 loss。
+        # 乘以当前批次的样本数，可以还原成该批次的 loss 总和。
+        current_batch_size = training_labels.size(0)
+        total_training_loss += training_loss.item() * current_batch_size
+        total_training_samples += current_batch_size
+
+        print(f"第 {batch_index}/{len(train_loader)} 批，"
+              f"更新前 loss：{training_loss.item():.4f}")
+
+    # 用所有样本的 loss 总和除以样本总数，得到这一轮的平均 loss。
+    average_training_loss = total_training_loss / total_training_samples
+    print(f"这一轮的平均训练 loss：{average_training_loss:.4f}")
+
+    # 切换到验证模式：接下来只检查模型，不再训练模型。
+    model.eval()
+
+    # 分别记录验证集中所有样本的 loss 总和与样本数量。
+    total_validation_loss = 0.0
+    total_validation_samples = 0
+
+    # 验证阶段不需要计算梯度，可以减少内存和计算量。
+    with torch.no_grad():
+        for validation_images, validation_labels in validation_loader:
+            # 使用当前模型预测这一批验证图片。
+            validation_scores = model(validation_images)
+
+            # 比较模型输出与正确标签，得到这一批的平均 loss。
+            validation_loss = loss_function(
+                validation_scores,
+                validation_labels,
+            )
+
+            # 把当前批次的平均 loss 换算为 loss 总和。
+            current_batch_size = validation_labels.size(0)
+            total_validation_loss += (validation_loss.item() *
+                                      current_batch_size)
+            total_validation_samples += current_batch_size
+
+    # 计算整个验证集的平均 loss。
+    average_validation_loss = (total_validation_loss /
+                               total_validation_samples)
+    print(f"这一轮的平均验证 loss：{average_validation_loss:.4f}")
 
 
 # 只有直接运行 python src/train.py 时才调用 main()。
