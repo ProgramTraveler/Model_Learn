@@ -171,7 +171,11 @@ def main():
     # epoch 表示完整遍历一次训练集；这里让模型连续学习 10 轮。
     number_of_epochs = 10
 
+    # range 包含起点、不包含终点：range(1, 11) 依次产生 1 到 10。
+    # 每次外层循环都执行下面缩进的完整流程：训练一轮，再验证一次。
+    # 模型在循环外创建，因此下一轮会接着使用上一轮更新后的参数。
     for epoch_index in range(1, number_of_epochs + 1):
+        # 显示当前轮次和总轮数，例如“第 1/10 轮”。
         print(f"\n第 {epoch_index}/{number_of_epochs} 轮")
 
         # 每一轮都先切换到训练模式，再遍历全部训练批次。
@@ -199,9 +203,7 @@ def main():
             total_training_samples += current_batch_size
 
         # 计算这一轮全部训练样本的平均 loss。
-        average_training_loss = (
-            total_training_loss / total_training_samples
-        )
+        average_training_loss = (total_training_loss / total_training_samples)
 
         # 训练结束后切换到验证模式，只检查模型而不更新参数。
         model.eval()
@@ -223,9 +225,8 @@ def main():
 
                 # 把当前批次的平均 loss 换算为 loss 总和。
                 current_batch_size = validation_labels.size(0)
-                total_validation_loss += (
-                    validation_loss.item() * current_batch_size
-                )
+                total_validation_loss += (validation_loss.item() *
+                                          current_batch_size)
                 total_validation_samples += current_batch_size
 
                 # 最大类别分数所在的下标就是模型的预测类别。
@@ -233,16 +234,13 @@ def main():
 
                 # 比较预测类别与正确标签，累计预测正确数量。
                 total_correct_predictions += (
-                    validation_predictions == validation_labels
-                ).sum().item()
+                    validation_predictions == validation_labels).sum().item()
 
         # 计算这一轮的平均验证 loss 和验证准确率。
-        average_validation_loss = (
-            total_validation_loss / total_validation_samples
-        )
-        validation_accuracy = (
-            total_correct_predictions / total_validation_samples
-        )
+        average_validation_loss = (total_validation_loss /
+                                   total_validation_samples)
+        validation_accuracy = (total_correct_predictions /
+                               total_validation_samples)
 
         print(f"平均训练 loss：{average_training_loss:.4f}")
         print(f"平均验证 loss：{average_validation_loss:.4f}")
