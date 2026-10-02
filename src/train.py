@@ -1,5 +1,7 @@
 from pathlib import Path
 
+# pyplot 用来把每轮记录的指标画成曲线。
+import matplotlib.pyplot as plt
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
@@ -171,6 +173,11 @@ def main():
     # epoch 表示完整遍历一次训练集；这里让模型连续学习 10 轮。
     number_of_epochs = 10
 
+    # 在轮次循环外创建列表，让各轮的指标一直保留在本次运行的内存中。
+    training_loss_history = []  # 按轮次记录平均训练 loss。
+    validation_loss_history = []  # 按轮次记录平均验证 loss。
+    validation_accuracy_history = []  # 按轮次记录验证准确率。
+
     # range 包含起点、不包含终点：range(1, 11) 依次产生 1 到 10。
     # 每次外层循环都执行下面缩进的完整流程：训练一轮，再验证一次。
     # 模型在循环外创建，因此下一轮会接着使用上一轮更新后的参数。
@@ -242,9 +249,45 @@ def main():
         validation_accuracy = (total_correct_predictions /
                                total_validation_samples)
 
+        # 每轮验证结束后追加一次，列表中的第一个数对应第 1 轮。
+        training_loss_history.append(average_training_loss)
+        validation_loss_history.append(average_validation_loss)
+        validation_accuracy_history.append(validation_accuracy)
+
         print(f"平均训练 loss：{average_training_loss:.4f}")
         print(f"平均验证 loss：{average_validation_loss:.4f}")
         print(f"验证准确率：{validation_accuracy:.2%}")
+
+    # 退出 epoch 循环后只执行一次，查看全部轮次的训练 loss。
+    print("\n各轮训练 loss：", training_loss_history)
+    # 列表中的相同位置对应同一轮，可以比较训练和验证 loss。
+    print("各轮验证 loss：", validation_loss_history)
+    # 直接打印列表时准确率仍是小数，例如 0.8 表示 80%。
+    print("各轮验证准确率：", validation_accuracy_history)
+
+    # 横轴依次是第 1 轮到第 10 轮，与历史列表中的记录一一对应。
+    epoch_numbers = range(1, number_of_epochs + 1)
+    # 创建画布，宽 8 英寸、高 5 英寸。
+    plt.figure(figsize=(8, 5))
+    # 将每轮训练 loss 连成曲线，圆点标出每轮的实际数值。
+    plt.plot(epoch_numbers, training_loss_history, marker="o", label="Train loss")
+    # 在同一张图上绘制验证 loss，方便与训练 loss 比较。
+    plt.plot(epoch_numbers, validation_loss_history, marker="o", label="Validation loss")
+    # 使用英文坐标标签，避免本机缺少中文字体时显示方框。
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    # 横轴只显示实际训练轮次，并用图例区分两条曲线。
+    plt.xticks(epoch_numbers)
+    plt.legend()
+    # 自动调整边距，避免坐标标签被裁掉。
+    plt.tight_layout()
+    # 将曲线保存到项目根目录，重新运行时会覆盖这张图。
+    chart_path = PROJECT_ROOT / "training_loss.png"
+    plt.savefig(chart_path)
+    # 保存后关闭画布，释放绘图占用的资源。
+    plt.close()
+    # 显示图片路径，方便训练结束后打开查看。
+    print("训练曲线已保存：", chart_path)
 
 
 # 只有直接运行 python src/train.py 时才调用 main()。
