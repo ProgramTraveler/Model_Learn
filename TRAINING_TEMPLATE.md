@@ -33,11 +33,13 @@ scene_model/
 
 ## 2. 完整模板代码
 
-代码各阶段都附有中文注释。已有环境需要安装 `torch` 和 `torchvision`；本项目可以沿用现有虚拟环境。
+代码各阶段都附有中文注释。已有环境需要安装 `torch`、`torchvision` 和 `matplotlib`；本项目可以沿用现有虚拟环境。
 
 ```python
 from pathlib import Path
 
+# pyplot 用来把每轮记录的指标画成曲线。
+import matplotlib.pyplot as plt
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
@@ -146,6 +148,20 @@ def main():
     # epoch 表示完整遍历一次训练集；这里让模型连续学习 10 轮。
     number_of_epochs = 10
 
+    # 在轮次循环外创建列表，让各轮的指标一直保留在本次运行的内存中。
+    training_loss_history = []  # 按轮次记录平均训练 loss。
+    validation_loss_history = []  # 按轮次记录平均验证 loss。
+    validation_accuracy_history = []  # 按轮次记录验证准确率。
+
+    # 在循环外保留最佳指标；准确率从 -1 开始，确保首轮可以更新。
+    best_validation_accuracy = -1.0
+    # 这里记录最佳准确率对应的 loss，不是所有轮次中最低的 loss。
+    best_validation_loss = float("inf")
+    # 轮次从 1 开始，0 表示目前还没有完成任何一轮验证。
+    best_epoch = 0
+    # 最佳参数保存到项目根目录；之后出现更好结果时覆盖同一个文件。
+    best_model_path = PROJECT_ROOT / "best_model.pth"
+
     # range 包含起点、不包含终点：range(1, 11) 依次产生 1 到 10。
     # 每次外层循环都执行下面缩进的完整流程：训练一轮，再验证一次。
     # 模型在循环外创建，因此下一轮会接着使用上一轮更新后的参数。
@@ -217,9 +233,71 @@ def main():
         validation_accuracy = (total_correct_predictions /
                                total_validation_samples)
 
+        # 优先比较准确率；准确率相同时，验证 loss 更低才算更好。
+        is_better = (
+            validation_accuracy > best_validation_accuracy
+            or (
+                validation_accuracy == best_validation_accuracy
+                and average_validation_loss < best_validation_loss
+            )
+        )
+        # 两个指标必须一起更新，确保它们来自同一轮。
+        if is_better:
+            best_validation_accuracy = validation_accuracy
+            best_validation_loss = average_validation_loss
+            # 只在指标变得更好时更新轮次，保持轮次与最佳指标对应。
+            best_epoch = epoch_index
+            # state_dict() 收集模型的参数和缓冲区，不包含模型结构。
+            # 必须在当前最佳轮次立即写入文件，后续训练仍会继续改变参数。
+            # 用字典一起保存参数和类别顺序，预测时才能正确解释类别编号。
+            torch.save({
+                "model_state_dict": model.state_dict(),
+                "class_names": class_names,
+            }, best_model_path)
+            print(f"已保存第 {best_epoch} 轮的最佳模型参数：{best_model_path}")
+
+        # 每轮验证结束后追加一次，列表中的第一个数对应第 1 轮。
+        training_loss_history.append(average_training_loss)
+        validation_loss_history.append(average_validation_loss)
+        validation_accuracy_history.append(validation_accuracy)
+
         print(f"平均训练 loss：{average_training_loss:.4f}")
         print(f"平均验证 loss：{average_validation_loss:.4f}")
         print(f"验证准确率：{validation_accuracy:.2%}")
+
+    # 退出 epoch 循环后只执行一次，查看全部轮次的训练 loss。
+    print("\n各轮训练 loss：", training_loss_history)
+    # 列表中的相同位置对应同一轮，可以比较训练和验证 loss。
+    print("各轮验证 loss：", validation_loss_history)
+    # 直接打印列表时准确率仍是小数，例如 0.8 表示 80%。
+    print("各轮验证准确率：", validation_accuracy_history)
+    print(f"最佳指标所在轮次：第 {best_epoch} 轮")
+    print(f"最佳验证准确率：{best_validation_accuracy:.2%}")
+    print(f"最佳准确率对应的验证 loss：{best_validation_loss:.4f}")
+
+    # 横轴依次是第 1 轮到第 10 轮，与历史列表中的记录一一对应。
+    epoch_numbers = range(1, number_of_epochs + 1)
+    # 创建画布，宽 8 英寸、高 5 英寸。
+    plt.figure(figsize=(8, 5))
+    # 将每轮训练 loss 连成曲线，圆点标出每轮的实际数值。
+    plt.plot(epoch_numbers, training_loss_history, marker="o", label="Train loss")
+    # 在同一张图上绘制验证 loss，方便与训练 loss 比较。
+    plt.plot(epoch_numbers, validation_loss_history, marker="o", label="Validation loss")
+    # 使用英文坐标标签，避免本机缺少中文字体时显示方框。
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    # 横轴只显示实际训练轮次，并用图例区分两条曲线。
+    plt.xticks(epoch_numbers)
+    plt.legend()
+    # 自动调整边距，避免坐标标签被裁掉。
+    plt.tight_layout()
+    # 将曲线保存到项目根目录，重新运行时会覆盖这张图。
+    chart_path = PROJECT_ROOT / "training_loss.png"
+    plt.savefig(chart_path)
+    # 保存后关闭画布，释放绘图占用的资源。
+    plt.close()
+    # 显示图片路径，方便训练结束后打开查看。
+    print("训练曲线已保存：", chart_path)
 
 
 # 直接运行本文件时开始训练；导入本文件时不自动执行。
@@ -246,13 +324,16 @@ if __name__ == "__main__":
 | 位置 | 操作 | 原因 |
 | --- | --- | --- |
 | epoch 循环之前 | 创建加载器、模型、损失函数和优化器 | 模型参数持续学习，不每轮重新初始化 |
+| epoch 循环之前 | 初始化历史列表、最佳指标及保存路径 | 跨轮次保留记录 |
 | 每轮训练开始 | `model.train()`，清零训练统计 | 从上一轮验证模式切回训练模式，只统计本轮 |
 | 每个训练批次 | `zero_grad → 预测 → loss → backward → step` | 清除旧梯度，计算本批梯度，再更新参数 |
 | 每个训练批次末尾 | 累计 `平均 loss × 实际批次大小` 和样本数 | 正确处理最后一个批次数量不足的情况 |
 | 训练批次循环结束 | 计算整轮平均训练 loss | 总 loss 除以总样本数 |
 | 每轮验证开始 | `model.eval()`，清零验证统计 | 检查本轮训练后的模型表现 |
 | 验证代码块 | `torch.no_grad()`，遍历验证集 | 预测并统计指标，不记录反向传播所需过程 |
-| 每轮验证结束 | 计算平均验证 loss 和准确率 | 观察本轮模型在验证数据上的表现 |
+| 每轮验证结束 | 计算平均验证 loss 和准确率，追加到历史列表 | 观察并保留本轮验证结果 |
+| 每轮指标计算之后 | 判断 `is_better`，更新最佳指标和轮次，并保存参数 | 准确率优先，同分比较 loss；完全相同则保留较早轮次 |
+| epoch 循环之后 | 输出最佳指标并保存 loss 曲线 | 汇总本次训练结果 |
 
 ### 今天学到的关键区别
 
@@ -278,4 +359,21 @@ python src/train.py
 
 loss 越低通常说明预测分数与正确标签越匹配，但不保证每轮都下降；验证准确率反映当前验证集的分类结果。较小验证集上的 100% 准确率不代表面对所有新图片都能正确识别。
 
-这个模板覆盖当前已学的训练与验证流程。参数目前只保存在运行中的内存里，程序结束后不会自动保存；模型保存、加载、新图片预测和训练曲线可以在后续学习时补充到本文件。
+运行后，项目根目录会产生以下文件：
+
+- `best_model.pth`：字典中的 `model_state_dict` 保存最佳模型参数和缓冲区，`class_names` 保存训练时的类别顺序。准确率更高，或准确率相同且 loss 更低时覆盖保存；重新运行训练也会覆盖该文件。
+- `training_loss.png`：各轮训练与验证 loss 曲线，重新运行时覆盖。
+
+最佳准确率、对应 loss 和轮次会在终端输出。历史指标列表仅保留在本次运行的内存中；图片展示的是 loss 曲线，不包含准确率曲线。
+
+`.pth` 是二进制文件，包含参数和类别名称，但不包含模型结构或优化器状态。加载时需要创建相同结构的模型，再把字典中的 `model_state_dict` 传给 `load_state_dict()`。当前项目的 `src/inspect_parameters.py` 已实现参数查看、加载及单张图片预测，可在项目根目录运行：
+
+```bash
+# 默认预测 sample_scene.png。
+python src/inspect_parameters.py
+
+# 也可以指定图片路径。
+python src/inspect_parameters.py "/完整路径/你的图片.jpg"
+```
+
+预测脚本从新格式文件的 `class_names` 读取类别顺序。旧的纯参数文件仍可读取，但兼容分支仅适用于本项目原有的 `['city', 'indoor', 'nature']` 顺序；其他数据集应重新训练并保存新格式。预测时的模型结构和图片预处理仍必须与训练时一致。

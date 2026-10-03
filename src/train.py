@@ -274,7 +274,11 @@ def main():
             best_epoch = epoch_index
             # state_dict() 收集模型的参数和缓冲区，不包含模型结构。
             # 必须在当前最佳轮次立即写入文件，后续训练仍会继续改变参数。
-            torch.save(model.state_dict(), best_model_path)
+            # 用字典一起保存参数和类别顺序，预测时才能正确解释类别编号。
+            torch.save({
+                "model_state_dict": model.state_dict(),
+                "class_names": class_names,
+            }, best_model_path)
             print(f"已保存第 {best_epoch} 轮的最佳模型参数：{best_model_path}")
 
         # 每轮验证结束后追加一次，列表中的第一个数对应第 1 轮。
