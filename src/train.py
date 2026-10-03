@@ -178,6 +178,15 @@ def main():
     validation_loss_history = []  # 按轮次记录平均验证 loss。
     validation_accuracy_history = []  # 按轮次记录验证准确率。
 
+    # 在循环外保留最佳指标；准确率从 -1 开始，确保首轮可以更新。
+    best_validation_accuracy = -1.0
+    # 这里记录最佳准确率对应的 loss，不是所有轮次中最低的 loss。
+    best_validation_loss = float("inf")
+    # 轮次从 1 开始，0 表示目前还没有完成任何一轮验证。
+    best_epoch = 0
+    # 最佳参数保存到项目根目录；之后出现更好结果时覆盖同一个文件。
+    best_model_path = PROJECT_ROOT / "best_model.pth"
+
     # range 包含起点、不包含终点：range(1, 11) 依次产生 1 到 10。
     # 每次外层循环都执行下面缩进的完整流程：训练一轮，再验证一次。
     # 模型在循环外创建，因此下一轮会接着使用上一轮更新后的参数。
@@ -249,6 +258,25 @@ def main():
         validation_accuracy = (total_correct_predictions /
                                total_validation_samples)
 
+        # 优先比较准确率；准确率相同时，验证 loss 更低才算更好。
+        is_better = (
+            validation_accuracy > best_validation_accuracy
+            or (
+                validation_accuracy == best_validation_accuracy
+                and average_validation_loss < best_validation_loss
+            )
+        )
+        # 两个指标必须一起更新，确保它们来自同一轮。
+        if is_better:
+            best_validation_accuracy = validation_accuracy
+            best_validation_loss = average_validation_loss
+            # 只在指标变得更好时更新轮次，保持轮次与最佳指标对应。
+            best_epoch = epoch_index
+            # state_dict() 收集模型的参数和缓冲区，不包含模型结构。
+            # 必须在当前最佳轮次立即写入文件，后续训练仍会继续改变参数。
+            torch.save(model.state_dict(), best_model_path)
+            print(f"已保存第 {best_epoch} 轮的最佳模型参数：{best_model_path}")
+
         # 每轮验证结束后追加一次，列表中的第一个数对应第 1 轮。
         training_loss_history.append(average_training_loss)
         validation_loss_history.append(average_validation_loss)
@@ -264,6 +292,9 @@ def main():
     print("各轮验证 loss：", validation_loss_history)
     # 直接打印列表时准确率仍是小数，例如 0.8 表示 80%。
     print("各轮验证准确率：", validation_accuracy_history)
+    print(f"最佳指标所在轮次：第 {best_epoch} 轮")
+    print(f"最佳验证准确率：{best_validation_accuracy:.2%}")
+    print(f"最佳准确率对应的验证 loss：{best_validation_loss:.4f}")
 
     # 横轴依次是第 1 轮到第 10 轮，与历史列表中的记录一一对应。
     epoch_numbers = range(1, number_of_epochs + 1)
