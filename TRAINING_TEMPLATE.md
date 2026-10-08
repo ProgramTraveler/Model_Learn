@@ -128,6 +128,12 @@ def create_model(number_of_classes: int):
 def main():
     """创建模型，并进行多轮训练和验证。"""
 
+    # 固定 PyTorch 随机种子，便于在相同环境和流程下重复比较实验。
+    # 必须放在模型初始化和数据打乱之前；不要在每轮训练中重新设置。
+    random_seed = 42
+    torch.manual_seed(random_seed)
+    print("随机种子：", random_seed)
+
     # 开始训练前确认数据集目录存在。
     if not TRAIN_DIR.is_dir() or not VALIDATION_DIR.is_dir():
         raise FileNotFoundError(f"没有找到数据集目录：{DATASET_ROOT}")
@@ -346,6 +352,10 @@ if __name__ == "__main__":
 - **准确率**：`argmax(dim=1)` 选出每张图片分数最高的类别，再用“预测正确数量 / 总样本数”计算准确率。
 
 ## 5. 运行与结果
+
+模板在 `main()` 开头使用 `torch.manual_seed(42)` 固定 PyTorch 随机数的起点，影响模型参数初始化和当前加载器的数据打乱。`42` 只是一个约定的整数，不会让模型更准确。固定种子便于在相同环境、数据和执行流程下比较实验，不保证跨设备或 PyTorch 版本得到完全相同的结果。
+
+本模板省略了 `src/train.py` 中正式训练前的单批次教学演示，因此两者即使使用相同种子，训练结果也不必相同。
 
 如果将模板用于 `src/train.py`，在项目根目录运行：
 

@@ -90,6 +90,12 @@ def create_model(number_of_classes: int):
 def main():
     """程序入口：检查环境并验证数据能否正确读取。"""
 
+    # 固定 PyTorch 随机种子，便于在相同环境和流程下重复比较实验。
+    # 必须放在模型初始化和数据打乱之前；不要在每轮训练中重新设置。
+    random_seed = 42
+    torch.manual_seed(random_seed)
+    print("随机种子：", random_seed)
+
     print("PyTorch 版本：", torch.__version__)
     print("项目目录：", PROJECT_ROOT)
 
