@@ -9,7 +9,7 @@ from train import create_image_transform, create_model
 
 # 从当前脚本的位置找到项目根目录，不依赖运行命令时所在的目录。
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-MODEL_PATH = PROJECT_ROOT / "best_model.pth"
+MODEL_PATH = PROJECT_ROOT / "outputs/scene_model/best_model.pth"
 DEFAULT_IMAGE_PATH = PROJECT_ROOT / "sample_scene.png"
 
 
@@ -22,28 +22,37 @@ def main():
         "image_path",
         nargs="?",
         type=Path,
-        default=DEFAULT_IMAGE_PATH,
+        default=None,
         help="图片路径；相对路径以当前工作目录为起点，默认使用项目中的 sample_scene.png",
     )
+    parser.add_argument("--model", type=Path, help="指定模型文件；窄道预测须同时提供图片路径")
     args = parser.parse_args()
+    if args.model is not None and args.image_path is None:
+        parser.error("指定 --model 时请同时提供要预测的图片路径")
+    model_path = (args.model or MODEL_PATH).expanduser().resolve()
     # 展开路径中的 ~，再转换为绝对路径，方便确认实际读取的图片。
-    image_path = args.image_path.expanduser().resolve()
+    image_path = (args.image_path or DEFAULT_IMAGE_PATH).expanduser().resolve()
     if not image_path.is_file():
         parser.error(f"没有找到图片文件：{image_path}")
 
-    if not MODEL_PATH.is_file():
-        raise FileNotFoundError(f"没有找到模型参数文件：{MODEL_PATH}")
+    if not model_path.is_file():
+        raise FileNotFoundError(
+            f"没有找到模型参数文件：{model_path}，请先训练或使用 --model 指定文件")
 
     # map_location="cpu" 把张量加载到 CPU，本步不需要显卡。
     # weights_only=True 使用受限加载方式，适合读取保存的 state_dict。
-    checkpoint = torch.load(MODEL_PATH, map_location="cpu", weights_only=True)
+    checkpoint = torch.load(model_path, map_location="cpu", weights_only=True)
     # 使用训练脚本保存的参数和类别顺序，避免手动猜测标签映射。
     if "model_state_dict" not in checkpoint or "class_names" not in checkpoint:
         raise ValueError("模型文件缺少参数或类别名称，请用当前 train.py 重新训练")
+    if checkpoint.get("architecture",
+                      "simple_cnn_v1") != "simple_cnn_v1" or checkpoint.get(
+                          "image_size", 64) != 64:
+        raise ValueError("模型结构或图片尺寸与当前代码不匹配")
     parameters = checkpoint["model_state_dict"]
     class_names = checkpoint["class_names"]
 
-    print("参数文件：", MODEL_PATH)
+    print("参数文件：", model_path)
     # 每一项由名称和张量组成，例如 0.weight 对应第 0 层的权重。
     for name, value in parameters.items():
         print(name, value.shape)

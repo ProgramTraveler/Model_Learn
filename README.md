@@ -2,7 +2,7 @@
 
 这是一个用于记录 PyTorch 与图像分类学习过程的项目。
 
-当前目标是逐步完成机器人前方通道“窄道 / 非窄道”的二分类模型。当前训练入口仍使用原三分类示例数据，等待标注团队确认交付格式并提供数据。项目使用 VS Code 开发，主要代码位于 `src/train.py`。
+当前目标是逐步完成机器人前方通道“窄道 / 非窄道”的二分类模型。现已支持 CSV 标注的二分类训练与单图预测，同时保留原三分类环境示例。真实窄道数据由标注团队提供。项目使用 VS Code 开发，主要代码位于 `src/train.py`。
 
 ## 当前学习内容
 
@@ -56,11 +56,44 @@ python src/train.py
 python src/inspect_parameters.py
 ```
 
+## 窄道二分类：直接运行
+
+CSV 格式暂定为 `image_path,label`，支持 UTF-8 或带 BOM 的 UTF-8，可选 `sequence_id`。
+图片相对路径以 `--image-root` 为起点；标注必须是整数 0 或 1。
+
+```csv
+image_path,label,sequence_id
+images/frame_001.jpg,1,run_001
+images/frame_002.jpg,0,run_002
+```
+
+准备 `narrow_road_dataset/train.csv`、`validation.csv` 和图片目录。训练、验证各包含两个类别，按采集序列或地点划分，不能将同一段视频的相邻帧随机分到两边。程序拒绝跨集合的相同图片路径和相同 sequence_id；它不能自动识别不同文件名的近似图片。
+
+以下命令**假设团队确认 0=非窄道、1=窄道**。如果编号相反，将 `--class-names` 改为 `narrow non_narrow`，训练和预测使用保存的顺序。
+
+```bash
+python src/train.py \
+  --train-csv narrow_road_dataset/train.csv \
+  --validation-csv narrow_road_dataset/validation.csv \
+  --image-root narrow_road_dataset \
+  --class-names non_narrow narrow \
+  --epochs 10 --batch-size 8 --lr 0.01
+
+python src/inspect_parameters.py narrow_road_dataset/images/new_image.jpg \
+  --model outputs/narrow_road/best_model.pth
+```
+
+输出包含 `best_model.pth`、`history.json`、`training_loss.png`。混淆矩阵的行是真实类别，列是预测类别；类别顺序与保存的 class_names 一致。最佳模型仍按验证准确率优先、相同准确率比较 loss 选择。注意窄道类别 recall 反映漏判情况，softmax 数值不是经过校准的可靠置信度。
+
+不带参数运行 `python src/train.py` 会训练原三分类示例，结果在 `outputs/scene_model/`，不会覆盖窄道模型。可使用 `--output-dir` 为不同实验指定目录；再次使用同一目录会覆盖结果。旧的根目录模型可用 `--model best_model.pth` 显式加载。当前仅使用 CPU 和 64×64 基础 CNN，作为学习基线；真实窄道效果需用独立采集数据验证。
+
+`outputs/` 和 `narrow_road_dataset/` 默认被 Git 忽略。仓库不包含真实窄道数据，也不使用生成图片代替真实训练数据。
+
 ## 学习进度
 
 ### 2026-10-11：环境配置与窄道数据读取起点
 
-已配置 Python 3.12 环境并验证训练与预测。新增 CSV 标注表读取；图片读取方法及窄道训练尚未接入。已精简额外单批次演示、复用预处理，并移除预测脚本中的旧三分类标签兜底。后续学习先修改代码，再逐段解读。
+已配置 Python 3.12 环境并验证训练与预测。已完成 CSV 校验、图片读取、二分类训练入口、混淆矩阵、各类别 precision / recall 和模型预测。已精简额外单批次演示、复用预处理，并移除预测脚本中的旧三分类标签兜底。后续学习先修改代码，再逐段解读。
 
 
 ### 2026-09-28：验证准确率与多轮训练

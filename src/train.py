@@ -1,7 +1,12 @@
+import argparse
 import csv
+import json
+import math
 from pathlib import Path
 
-# pyplot 用来把每轮记录的指标画成曲线。
+import matplotlib
+
+matplotlib.use("Agg")  # 只保存曲线，终端运行不需要图形窗口。
 import matplotlib.pyplot as plt
 import torch
 from PIL import Image
@@ -9,8 +14,6 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 from torchvision import datasets, transforms
 
-# __file__ 表示当前 train.py 文件的位置。
-# parent.parent 从 src/train.py 返回到项目根目录。
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATASET_ROOT = PROJECT_ROOT / "learning_scene_dataset"
 TRAIN_DIR = DATASET_ROOT / "train"
@@ -18,309 +21,273 @@ VALIDATION_DIR = DATASET_ROOT / "validation"
 
 
 class NarrowRoadDataset(Dataset):
-    """按 CSV 标注读取图片与二分类标签；编号含义待团队确认。"""
+    """CSV 必须有 image_path、label；label 是 0 或 1，可选 sequence_id。"""
 
     def __init__(self, csv_path, image_root, transform=None):
-        # 图片路径以这个目录为起点；在读取样本时使用。
-        self.image_root = Path(image_root)
-        # 保存预处理方法，后续读取图片时使用。
+        self.csv_path = Path(csv_path).expanduser().resolve()
+        self.image_root = Path(image_root).expanduser().resolve()
         self.transform = transform
-
-        # CSV 示例列名为 image_path、label，最终按标注团队格式适配。
-        # utf-8-sig 也能处理带 BOM 的 UTF-8 文件。
-        with open(csv_path, newline="", encoding="utf-8-sig") as file:
-            # 每行变成一个字典；CSV 中的 label 目前仍是字符串。
-            self.records = list(csv.DictReader(file))
+        self.records = []
+        with self.csv_path.open(newline="", encoding="utf-8-sig") as file:
+            reader = csv.DictReader(file)
+            if not {"image_path", "label"}.issubset(reader.fieldnames or []):
+                raise ValueError(f"{self.csv_path} 必须包含 image_path、label 两列")
+            has_sequence = "sequence_id" in reader.fieldnames
+            seen = set()
+            for line, row in enumerate(reader, start=2):
+                location = f"{self.csv_path}:{line}"
+                name = (row.get("image_path") or "").strip()
+                value = (row.get("label") or "").strip()
+                if not name or value not in {"0", "1"}:
+                    raise ValueError(f"{location} 图片路径不能为空，label 必须为 0 或 1")
+                image_path = (self.image_root /
+                              Path(name).expanduser()).resolve()
+                if not image_path.is_file():
+                    raise FileNotFoundError(f"{location} 找不到图片：{image_path}")
+                if image_path in seen:
+                    raise ValueError(f"{location} 图片重复：{image_path}")
+                seen.add(image_path)
+                # 提前验证文件可解码，避免训练到中途才发现损坏图片。
+                with Image.open(image_path) as image:
+                    image.verify()
+                sequence = (row.get("sequence_id") or "").strip()
+                if has_sequence and not sequence:
+                    raise ValueError(f"{location} sequence_id 不能为空")
+                self.records.append({
+                    "image_path": image_path,
+                    "label": int(value),
+                    "sequence_id": sequence
+                })
+        if not self.records:
+            raise ValueError(f"标注表为空：{self.csv_path}")
 
     def __len__(self):
-        # 标注表中的记录数量就是数据集的样本数量。
         return len(self.records)
 
-
     def __getitem__(self, index):
-        # index 从 0 开始；每条记录包含 image_path 和 label。
         record = self.records[index]
-        image_path = self.image_root / record["image_path"]
-        # CSV 的标签是字符串；交叉熵需要整数类别编号。
-        label = int(record["label"])
-        if label not in (0, 1):
-            raise ValueError(f"二分类标签必须为 0 或 1：{image_path}，实际为 {label}")
-
-        with Image.open(image_path) as source:
-            # 统一为三个颜色通道，避免灰度图或透明图片的通道数量不一致。
+        with Image.open(record["image_path"]) as source:
             image = source.convert("RGB")
         if self.transform is not None:
-            # 传入 create_image_transform() 时，输出为 [3, 64, 64] 张量。
             image = self.transform(image)
-
-        return image, label
+        return image, record["label"]
 
 
 def create_image_transform():
-    """训练和预测共用预处理，确保输入格式一致。"""
-    return transforms.Compose([
-        transforms.Resize((64, 64)),
-        transforms.ToTensor(),
-    ])
+    """训练与预测统一输入：RGB、64×64、浮点张量。"""
+    return transforms.Compose(
+        [transforms.Resize((64, 64)),
+         transforms.ToTensor()])
 
 
-def create_data_loaders(batch_size: int = 8):
-    """读取训练集和验证集，并创建分批加载器。"""
+def create_data_loaders(batch_size=8,
+                        *,
+                        train_csv=None,
+                        validation_csv=None,
+                        image_root=None,
+                        class_names=None):
+    transform = create_image_transform()
+    options = (train_csv, validation_csv, image_root, class_names)
+    if any(value is not None for value in options):
+        if any(value is None for value in options):
+            raise ValueError("CSV 模式需要训练表、验证表、图片根目录和类别顺序")
+        if isinstance(class_names, str):
+            raise ValueError("class_names 应是两个名称组成的列表")
+        class_names = list(class_names)
+        if (len(class_names) != 2 or len(set(class_names)) != 2
+                or any(not isinstance(n, str) or not n.strip()
+                       for n in class_names)):
+            raise ValueError("class_names 必须按 label 0、1 提供两个不同的非空名称")
+        train = NarrowRoadDataset(train_csv, image_root, transform)
+        validation = NarrowRoadDataset(validation_csv, image_root, transform)
+        # 防止同一图片或同一采集序列出现在训练和验证两边。
+        train_paths = {r["image_path"] for r in train.records}
+        if train_paths & {r["image_path"] for r in validation.records}:
+            raise ValueError("训练集和验证集包含相同图片路径，请重新划分")
+        train_sequences = {
+            r["sequence_id"]
+            for r in train.records if r["sequence_id"]
+        }
+        validation_sequences = {
+            r["sequence_id"]
+            for r in validation.records if r["sequence_id"]
+        }
+        if bool(train_sequences) != bool(validation_sequences):
+            raise ValueError("两份 CSV 应同时提供 sequence_id，或同时不提供")
+        if train_sequences & validation_sequences:
+            raise ValueError("训练集和验证集包含相同 sequence_id，请按采集序列划分")
+        for name, dataset in [("训练集", train), ("验证集", validation)]:
+            if {r["label"] for r in dataset.records} != {0, 1}:
+                raise ValueError(f"{name} 必须包含两个类别的图片")
+    else:
+        train = datasets.ImageFolder(TRAIN_DIR, transform=transform)
+        validation = datasets.ImageFolder(VALIDATION_DIR, transform=transform)
+        if train.class_to_idx != validation.class_to_idx:
+            raise ValueError("训练和验证的类别映射不一致")
+        class_names = train.classes
+    if batch_size < 1 or not len(train) or not len(validation):
+        raise ValueError("批次大小必须大于 0，数据集不能为空")
+    return (DataLoader(train, batch_size=batch_size, shuffle=True),
+            DataLoader(validation, batch_size=batch_size,
+                       shuffle=False), class_names)
 
-    image_transform = create_image_transform()
 
-    # ImageFolder 根据子文件夹名称自动生成类别标签。
-    train_dataset = datasets.ImageFolder(
-        root=TRAIN_DIR,
-        transform=image_transform,
-    )
-    validation_dataset = datasets.ImageFolder(
-        root=VALIDATION_DIR,
-        transform=image_transform,
-    )
-
-    # 训练集和验证集必须使用完全相同的类别编号。
-    if train_dataset.class_to_idx != validation_dataset.class_to_idx:
-        raise ValueError("训练集与验证集的类别不一致")
-
-    # 训练数据需要打乱；验证数据保持固定顺序。
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=batch_size,
-        shuffle=True,
-    )
-    validation_loader = DataLoader(
-        validation_dataset,
-        batch_size=batch_size,
-        shuffle=False,
-    )
-
-    return train_loader, validation_loader, train_dataset.classes
-
-
-def create_model(number_of_classes: int):
-    """创建一个用于 64×64 彩色图片分类的简单 CNN。"""
-
-    model = nn.Sequential(
-        # 输入形状：[批次数量, 3, 64, 64]
-        # 使用 8 个卷积核，输出 8 张特征图。
-        nn.Conv2d(
-            in_channels=3,  # 有三个颜色通道
-            out_channels=8,  # 有 8 个卷积核，产生 8 个特征图
-            kernel_size=3,  # 每个卷积核观察 3x3 局部区域
-            padding=1,  # 上下左右临时补一圈 0
-        ),
-
-        # 把负数变为 0，为模型加入非线性能力。
+def create_model(number_of_classes):
+    """沿用已学过的 CNN；输出数量由类别数决定。"""
+    return nn.Sequential(
+        nn.Conv2d(3, 8, kernel_size=3, padding=1),  # [N,3,64,64] → [N,8,64,64]
         nn.ReLU(),
-
-        # 高度和宽度从 64×64 缩小为 32×32。
-        nn.MaxPool2d(kernel_size=2),
-
-        # 保留批次维度，把每张图片的特征展开成一排数字。
-        # 从下标 1 开始，把后面的维度全部合并。
-        nn.Flatten(start_dim=1),
-
-        # 每张图片有 8×32×32 个特征。
-        # 最终输出的分数数量等于数据集的类别数量。
-        nn.Linear(
-            in_features=8 * 32 * 32,
-            out_features=number_of_classes,
-        ),
+        nn.MaxPool2d(2),  # → [N,8,32,32]
+        nn.Flatten(start_dim=1),  # → [N,8192]
+        nn.Linear(8 * 32 * 32, number_of_classes),  # 原始类别分数
     )
 
-    return model
+
+def run_epoch(model, loader, loss_function, optimizer=None):
+    """传入优化器时训练；否则只验证，返回平均 loss 和混淆矩阵。"""
+    training = optimizer is not None
+    model.train(training)
+    total_loss = 0.0
+    matrix = torch.zeros(model[-1].out_features,
+                         model[-1].out_features,
+                         dtype=torch.long)
+    with torch.set_grad_enabled(training):
+        for images, labels in loader:
+            if training:
+                optimizer.zero_grad()
+            scores = model(images)
+            loss = loss_function(scores, labels)
+            if not torch.isfinite(loss):
+                raise ValueError("loss 出现非有限值，请检查数据或降低学习率")
+            if training:
+                loss.backward()
+                optimizer.step()
+            total_loss += loss.item() * labels.size(0)
+            predictions = scores.argmax(dim=1)
+            # 行是真实类别，列是预测类别。
+            indices = labels * matrix.size(0) + predictions
+            matrix += torch.bincount(
+                indices, minlength=matrix.numel()).reshape(matrix.shape)
+    return total_loss / len(loader.dataset), matrix
+
+
+def describe_metrics(matrix, class_names):
+    result = {}
+    for index, name in enumerate(class_names):
+        correct = matrix[index, index].item()
+        predicted = matrix[:, index].sum().item()
+        actual = matrix[index].sum().item()
+        result[name] = {
+            "precision": correct / predicted if predicted else 0.0,
+            "recall": correct / actual if actual else 0.0,
+            "support": actual
+        }
+    return result
 
 
 def main():
-    """程序入口：训练、验证、保存最佳模型并绘制曲线。"""
-
-    # 固定 PyTorch 随机种子，便于在相同环境和流程下重复比较实验。
-    # 必须放在模型初始化和数据打乱之前；不要在每轮训练中重新设置。
-    random_seed = 42
-    torch.manual_seed(random_seed)
-    print("随机种子：", random_seed)
-
-    print("PyTorch 版本：", torch.__version__)
-    print("项目目录：", PROJECT_ROOT)
-
-    # 提前检查目录，可以给出比 ImageFolder 更容易理解的错误信息。
-    if not TRAIN_DIR.is_dir() or not VALIDATION_DIR.is_dir():
-        raise FileNotFoundError(f"没有找到数据集目录：{DATASET_ROOT}")
-
-    train_loader, validation_loader, class_names = create_data_loaders()
-
-    print("类别名称：", class_names)
-    print("训练批次数量：", len(train_loader))
-    print("验证批次数量：", len(validation_loader))
-
-    # 类别数量来自数据集；二分类数据接入后，这里会自动输出两个分数。
-    model = create_model(number_of_classes=len(class_names))
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
-    # 交叉熵接收原始类别分数，不需要提前调用 softmax。
+    parser = argparse.ArgumentParser(description="场景示例 / 机器人窄道 CSV 二分类训练（CPU）")
+    parser.add_argument("--train-csv", type=Path)
+    parser.add_argument("--validation-csv", type=Path)
+    parser.add_argument("--image-root", type=Path)
+    parser.add_argument("--class-names",
+                        nargs=2,
+                        choices=["non_narrow", "narrow"],
+                        help="按 label 0、1 的顺序提供名称，必须与团队标注一致")
+    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--lr", type=float, default=0.01)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help="默认 outputs/narrow_road 或 outputs/scene_model；重新运行会覆盖同目录产物")
+    args = parser.parse_args()
+    options = (args.train_csv, args.validation_csv, args.image_root,
+               args.class_names)
+    csv_mode = any(value is not None for value in options)
+    if csv_mode and (any(value is None for value in options)
+                     or set(args.class_names) != {"narrow", "non_narrow"}):
+        parser.error("窄道模式须同时提供两份 CSV、图片根目录和两个不同类别名称")
+    if args.epochs < 1 or args.batch_size < 1 or not math.isfinite(
+            args.lr) or args.lr <= 0:
+        parser.error("epochs、batch-size 和 lr 必须大于 0，lr 必须是有限数值")
+    torch.manual_seed(args.seed)
+    try:
+        train_loader, validation_loader, class_names = create_data_loaders(
+            args.batch_size,
+            train_csv=args.train_csv,
+            validation_csv=args.validation_csv,
+            image_root=args.image_root,
+            class_names=args.class_names)
+    except (ValueError, OSError) as error:
+        parser.error(str(error))
+    output_dir = (
+        args.output_dir or PROJECT_ROOT / "outputs" /
+        ("narrow_road" if csv_mode else "scene_model")).expanduser().resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    print("模式：", "窄道二分类" if csv_mode else "原三分类示例")
+    print("类别映射：", dict(enumerate(class_names)))
+    print("训练 / 验证样本数：", len(train_loader.dataset),
+          len(validation_loader.dataset))
+    model = create_model(len(class_names))
+    optimizer = torch.optim.SGD(model.parameters(), lr=args.lr)
     loss_function = nn.CrossEntropyLoss()
-    print("模型结构：")
-    print(model)
-
-    # epoch 表示完整遍历一次训练集；这里让模型连续学习 10 轮。
-    number_of_epochs = 10
-
-    # 在轮次循环外创建列表，让各轮的指标一直保留在本次运行的内存中。
-    training_loss_history = []  # 按轮次记录平均训练 loss。
-    validation_loss_history = []  # 按轮次记录平均验证 loss。
-    validation_accuracy_history = []  # 按轮次记录验证准确率。
-
-    # 在循环外保留最佳指标；准确率从 -1 开始，确保首轮可以更新。
-    best_validation_accuracy = -1.0
-    # 这里记录最佳准确率对应的 loss，不是所有轮次中最低的 loss。
-    best_validation_loss = float("inf")
-    # 轮次从 1 开始，0 表示目前还没有完成任何一轮验证。
-    best_epoch = 0
-    # 最佳参数保存到项目根目录；之后出现更好结果时覆盖同一个文件。
-    best_model_path = PROJECT_ROOT / "best_model.pth"
-
-    # range 包含起点、不包含终点：range(1, 11) 依次产生 1 到 10。
-    # 每次外层循环都执行下面缩进的完整流程：训练一轮，再验证一次。
-    # 模型在循环外创建，因此下一轮会接着使用上一轮更新后的参数。
-    for epoch_index in range(1, number_of_epochs + 1):
-        # 显示当前轮次和总轮数，例如“第 1/10 轮”。
-        print(f"\n第 {epoch_index}/{number_of_epochs} 轮")
-
-        # 每一轮都先切换到训练模式，再遍历全部训练批次。
-        model.train()
-
-        # 累加这一轮所有样本的 loss，最后计算整轮的平均 loss。
-        total_training_loss = 0.0
-        total_training_samples = 0
-
-        for training_images, training_labels in train_loader:
-            # 每个批次开始前清除上一批次留下的梯度。
-            optimizer.zero_grad()
-
-            # 预测当前批次，并与正确标签比较。
-            training_scores = model(training_images)
-            training_loss = loss_function(training_scores, training_labels)
-
-            # 先计算梯度，再用梯度更新模型参数。
-            training_loss.backward()
-            optimizer.step()
-
-            # 把批次平均 loss 换算成总和，再累计样本数量。
-            current_batch_size = training_labels.size(0)
-            total_training_loss += training_loss.item() * current_batch_size
-            total_training_samples += current_batch_size
-
-        # 计算这一轮全部训练样本的平均 loss。
-        average_training_loss = (total_training_loss / total_training_samples)
-
-        # 训练结束后切换到验证模式，只检查模型而不更新参数。
-        model.eval()
-
-        # 记录验证集的 loss 总和、样本数量和预测正确数量。
-        total_validation_loss = 0.0
-        total_validation_samples = 0
-        total_correct_predictions = 0
-
-        # 验证阶段不需要计算梯度，可以减少内存和计算量。
-        with torch.no_grad():
-            for validation_images, validation_labels in validation_loader:
-                # 使用当前模型预测这一批验证图片。
-                validation_scores = model(validation_images)
-                validation_loss = loss_function(
-                    validation_scores,
-                    validation_labels,
-                )
-
-                # 把当前批次的平均 loss 换算为 loss 总和。
-                current_batch_size = validation_labels.size(0)
-                total_validation_loss += (validation_loss.item() *
-                                          current_batch_size)
-                total_validation_samples += current_batch_size
-
-                # 最大类别分数所在的下标就是模型的预测类别。
-                validation_predictions = validation_scores.argmax(dim=1)
-
-                # 比较预测类别与正确标签，累计预测正确数量。
-                total_correct_predictions += (
-                    validation_predictions == validation_labels).sum().item()
-
-        # 计算这一轮的平均验证 loss 和验证准确率。
-        average_validation_loss = (total_validation_loss /
-                                   total_validation_samples)
-        validation_accuracy = (total_correct_predictions /
-                               total_validation_samples)
-
-        # 优先比较准确率；准确率相同时，验证 loss 更低才算更好。
-        is_better = (validation_accuracy > best_validation_accuracy
-                     or (validation_accuracy == best_validation_accuracy
-                         and average_validation_loss < best_validation_loss))
-        # 两个指标必须一起更新，确保它们来自同一轮。
-        if is_better:
-            best_validation_accuracy = validation_accuracy
-            best_validation_loss = average_validation_loss
-            # 只在指标变得更好时更新轮次，保持轮次与最佳指标对应。
-            best_epoch = epoch_index
-            # state_dict() 收集模型的参数和缓冲区，不包含模型结构。
-            # 必须在当前最佳轮次立即写入文件，后续训练仍会继续改变参数。
-            # 用字典一起保存参数和类别顺序，预测时才能正确解释类别编号。
+    best_accuracy, best_loss = -1.0, float("inf")
+    history = []
+    for epoch in range(1, args.epochs + 1):
+        train_loss, _ = run_epoch(model, train_loader, loss_function,
+                                  optimizer)
+        validation_loss, matrix = run_epoch(model, validation_loader,
+                                            loss_function)
+        accuracy = matrix.diag().sum().item() / matrix.sum().item()
+        metrics = describe_metrics(matrix, class_names)
+        record = {
+            "epoch": epoch,
+            "train_loss": train_loss,
+            "validation_loss": validation_loss,
+            "validation_accuracy": accuracy,
+            "class_metrics": metrics,
+            "confusion_matrix": matrix.tolist()
+        }
+        history.append(record)
+        if accuracy > best_accuracy or (accuracy == best_accuracy
+                                        and validation_loss < best_loss):
+            best_accuracy, best_loss = accuracy, validation_loss
+            # 参数、标签映射、预处理信息和最佳轮次一起保存，预测时无需猜测。
             torch.save(
                 {
                     "model_state_dict": model.state_dict(),
                     "class_names": class_names,
-                }, best_model_path)
-            print(f"已保存第 {best_epoch} 轮的最佳模型参数：{best_model_path}")
-
-        # 每轮验证结束后追加一次，列表中的第一个数对应第 1 轮。
-        training_loss_history.append(average_training_loss)
-        validation_loss_history.append(average_validation_loss)
-        validation_accuracy_history.append(validation_accuracy)
-
-        print(f"平均训练 loss：{average_training_loss:.4f}")
-        print(f"平均验证 loss：{average_validation_loss:.4f}")
-        print(f"验证准确率：{validation_accuracy:.2%}")
-
-    # 退出 epoch 循环后只执行一次，查看全部轮次的训练 loss。
-    print("\n各轮训练 loss：", training_loss_history)
-    # 列表中的相同位置对应同一轮，可以比较训练和验证 loss。
-    print("各轮验证 loss：", validation_loss_history)
-    # 直接打印列表时准确率仍是小数，例如 0.8 表示 80%。
-    print("各轮验证准确率：", validation_accuracy_history)
-    print(f"最佳指标所在轮次：第 {best_epoch} 轮")
-    print(f"最佳验证准确率：{best_validation_accuracy:.2%}")
-    print(f"最佳准确率对应的验证 loss：{best_validation_loss:.4f}")
-
-    # 横轴依次是第 1 轮到第 10 轮，与历史列表中的记录一一对应。
-    epoch_numbers = range(1, number_of_epochs + 1)
-    # 创建画布，宽 8 英寸、高 5 英寸。
+                    "image_size": 64,
+                    "architecture": "simple_cnn_v1",
+                    "epoch": epoch,
+                    "metrics": record,
+                    "seed": args.seed
+                }, output_dir / "best_model.pth")
+        (output_dir / "history.json").write_text(json.dumps(history, indent=2),
+                                                 encoding="utf-8")
+        print(f"第 {epoch}/{args.epochs} 轮：train loss={train_loss:.4f}，"
+              f"validation loss={validation_loss:.4f}，accuracy={accuracy:.2%}")
+        for name, value in metrics.items():
+            print(
+                f"  {name}：precision={value['precision']:.2%}，recall={value['recall']:.2%}"
+            )
     plt.figure(figsize=(8, 5))
-    # 将每轮训练 loss 连成曲线，圆点标出每轮的实际数值。
-    plt.plot(epoch_numbers,
-             training_loss_history,
-             marker="o",
-             label="Train loss")
-    # 在同一张图上绘制验证 loss，方便与训练 loss 比较。
-    plt.plot(epoch_numbers,
-             validation_loss_history,
-             marker="o",
-             label="Validation loss")
-    # 使用英文坐标标签，避免本机缺少中文字体时显示方框。
+    for key, label in [("train_loss", "Train loss"),
+                       ("validation_loss", "Validation loss")]:
+        plt.plot([r["epoch"] for r in history], [r[key] for r in history],
+                 marker="o",
+                 label=label)
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
-    # 横轴只显示实际训练轮次，并用图例区分两条曲线。
-    plt.xticks(epoch_numbers)
     plt.legend()
-    # 自动调整边距，避免坐标标签被裁掉。
     plt.tight_layout()
-    # 将曲线保存到项目根目录，重新运行时会覆盖这张图。
-    chart_path = PROJECT_ROOT / "training_loss.png"
-    plt.savefig(chart_path)
-    # 保存后关闭画布，释放绘图占用的资源。
+    plt.savefig(output_dir / "training_loss.png")
     plt.close()
-    # 显示图片路径，方便训练结束后打开查看。
-    print("训练曲线已保存：", chart_path)
+    print("最佳验证准确率：", f"{best_accuracy:.2%}")
+    print("结果目录：", output_dir)
 
 
-# 只有直接运行 python src/train.py 时才调用 main()。
-# 以后其他文件导入 train.py 时，不会自动开始训练。
 if __name__ == "__main__":
     main()

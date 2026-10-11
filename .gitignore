@@ -28,3 +28,7 @@ venv/
 
 # 训练运行生成的曲线
 /training_loss.png
+
+# 训练结果和标注团队提供的本地数据
+/outputs/
+/narrow_road_dataset/
