@@ -4,6 +4,7 @@ from pathlib import Path
 # pyplot 用来把每轮记录的指标画成曲线。
 import matplotlib.pyplot as plt
 import torch
+from PIL import Image
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 from torchvision import datasets, transforms
@@ -17,10 +18,10 @@ VALIDATION_DIR = DATASET_ROOT / "validation"
 
 
 class NarrowRoadDataset(Dataset):
-    """窄道数据读取的第一步：读取标注表；后续补充图片读取方法。"""
+    """按 CSV 标注读取图片与二分类标签；编号含义待团队确认。"""
 
     def __init__(self, csv_path, image_root, transform=None):
-        # 图片路径以这个目录为起点；暂时只保存，尚未加载图片。
+        # 图片路径以这个目录为起点；在读取样本时使用。
         self.image_root = Path(image_root)
         # 保存预处理方法，后续读取图片时使用。
         self.transform = transform
@@ -34,6 +35,25 @@ class NarrowRoadDataset(Dataset):
     def __len__(self):
         # 标注表中的记录数量就是数据集的样本数量。
         return len(self.records)
+
+
+    def __getitem__(self, index):
+        # index 从 0 开始；每条记录包含 image_path 和 label。
+        record = self.records[index]
+        image_path = self.image_root / record["image_path"]
+        # CSV 的标签是字符串；交叉熵需要整数类别编号。
+        label = int(record["label"])
+        if label not in (0, 1):
+            raise ValueError(f"二分类标签必须为 0 或 1：{image_path}，实际为 {label}")
+
+        with Image.open(image_path) as source:
+            # 统一为三个颜色通道，避免灰度图或透明图片的通道数量不一致。
+            image = source.convert("RGB")
+        if self.transform is not None:
+            # 传入 create_image_transform() 时，输出为 [3, 64, 64] 张量。
+            image = self.transform(image)
+
+        return image, label
 
 
 def create_image_transform():
