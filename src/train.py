@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision import datasets, transforms
 
 # __file__ 表示当前 train.py 文件的位置。
-# parent.parent 从 src/train.py 返回到项目根目录 scene_model。
+# parent.parent 从 src/train.py 返回到项目根目录。
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATASET_ROOT = PROJECT_ROOT / "learning_scene_dataset"
 TRAIN_DIR = DATASET_ROOT / "train"
@@ -36,14 +36,18 @@ class NarrowRoadDataset(Dataset):
         return len(self.records)
 
 
-def create_data_loaders(batch_size: int = 8):
-    """读取训练集和验证集，并创建分批加载器。"""
-
-    # 所有图片统一调整为 64×64，再转换为 PyTorch Tensor。
-    image_transform = transforms.Compose([
+def create_image_transform():
+    """训练和预测共用预处理，确保输入格式一致。"""
+    return transforms.Compose([
         transforms.Resize((64, 64)),
         transforms.ToTensor(),
     ])
+
+
+def create_data_loaders(batch_size: int = 8):
+    """读取训练集和验证集，并创建分批加载器。"""
+
+    image_transform = create_image_transform()
 
     # ImageFolder 根据子文件夹名称自动生成类别标签。
     train_dataset = datasets.ImageFolder(
@@ -109,7 +113,7 @@ def create_model(number_of_classes: int):
 
 
 def main():
-    """程序入口：检查环境并验证数据能否正确读取。"""
+    """程序入口：训练、验证、保存最佳模型并绘制曲线。"""
 
     # 固定 PyTorch 随机种子，便于在相同环境和流程下重复比较实验。
     # 必须放在模型初始化和数据打乱之前；不要在每轮训练中重新设置。
@@ -130,72 +134,13 @@ def main():
     print("训练批次数量：", len(train_loader))
     print("验证批次数量：", len(validation_loader))
 
-    # 读取一个训练批次，确认图片和标签的形状。
-    batch_images, batch_labels = next(iter(train_loader))
-    print("一个批次的图片形状：", batch_images.shape)
-    print("一个批次的标签形状：", batch_labels.shape)
-
-    # 类别数量由 ImageFolder 读取到的文件夹数量决定。
+    # 类别数量来自数据集；二分类数据接入后，这里会自动输出两个分数。
     model = create_model(number_of_classes=len(class_names))
-
-    # SGD 根据参数的梯度更新模型；学习率决定每次更新的步长。
     optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
-
-    # 清除可能保留的旧梯度。本例只运行一次，仍按标准训练顺序书写。
-    optimizer.zero_grad()
-
-    # 保存更新前的分类层权重，稍后检查整层是否发生变化。
-    weights_before = model[4].weight.detach().clone()
-
-    # 为反向传播保留计算过程，因此这里不能使用 torch.no_grad()。
-    batch_scores = model(batch_images)
-
-    # 交叉熵损失比较原始类别分数与正确标签。
-    # 它会在内部处理概率，因此这里不要先调用 softmax。
+    # 交叉熵接收原始类别分数，不需要提前调用 softmax。
     loss_function = nn.CrossEntropyLoss()
-    batch_loss = loss_function(batch_scores, batch_labels)
-
     print("模型结构：")
     print(model)
-    print("模型输出的类别分数形状：", batch_scores.shape)
-    print("这个批次的正确标签：", batch_labels)
-    print("这个批次的平均 loss：", batch_loss.item())
-
-    # 下标 0 指同一个批次中的第一张图片。
-    # 它的三个分数和正确标签必须按相同下标配对。
-    first_scores = batch_scores[0]
-    first_label = batch_labels[0].item()
-    first_prediction = first_scores.argmax().item()
-
-    print("第一张图片的类别分数：", first_scores)
-    print("第一张图片的预测类别：", class_names[first_prediction])
-    print("第一张图片的正确类别：", class_names[first_label])
-
-    # 从 loss 反向计算每个可训练参数的梯度。
-    # 这一步只计算调整方向；还没有改变模型参数。
-    batch_loss.backward()
-
-    # 第 0 层是卷积层，第 4 层是最终分类层。
-    print("卷积层权重的梯度形状：", model[0].weight.grad.shape)
-    print("分类层权重的梯度形状：", model[4].weight.grad.shape)
-
-    # 根据刚算出的梯度更新全部可训练参数；当前只更新一次。
-    optimizer.step()
-
-    # 单个权重可能因对应梯度为 0 而不变，所以比较整层最大变化量。
-    largest_weight_change = (model[4].weight.detach() -
-                             weights_before).abs().max().item()
-
-    print("分类层权重的最大变化量：", largest_weight_change)
-
-    # 用更新后的模型重新预测同一批图片，以便比较更新前后的 loss。
-    # 这里只检查结果，不需要记录梯度。
-    with torch.no_grad():
-        updated_scores = model(batch_images)
-        updated_loss = loss_function(updated_scores, batch_labels)
-
-    print("更新前 loss：", batch_loss.item())
-    print("更新后 loss：", updated_loss.item())
 
     # epoch 表示完整遍历一次训练集；这里让模型连续学习 10 轮。
     number_of_epochs = 10

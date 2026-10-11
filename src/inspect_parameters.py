@@ -3,10 +3,9 @@ from pathlib import Path
 
 import torch
 from PIL import Image
-from torchvision import transforms
 
 # 复用训练时的模型结构；train.py 的入口判断会阻止导入时启动训练。
-from train import create_model
+from train import create_image_transform, create_model
 
 # 从当前脚本的位置找到项目根目录，不依赖运行命令时所在的目录。
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -38,15 +37,11 @@ def main():
     # map_location="cpu" 把张量加载到 CPU，本步不需要显卡。
     # weights_only=True 使用受限加载方式，适合读取保存的 state_dict。
     checkpoint = torch.load(MODEL_PATH, map_location="cpu", weights_only=True)
-    # 新格式同时保存参数和类别顺序，分别取出后再使用。
-    if "model_state_dict" in checkpoint:
-        parameters = checkpoint["model_state_dict"]
-        class_names = checkpoint["class_names"]
-    else:
-        # 兼容本项目前面保存的纯参数文件，仅沿用当时训练日志中的类别顺序。
-        parameters = checkpoint
-        class_names = ["city", "indoor", "nature"]
-        print("读取旧格式：使用本项目原有类别顺序；其他数据集请重新训练保存新格式。")
+    # 使用训练脚本保存的参数和类别顺序，避免手动猜测标签映射。
+    if "model_state_dict" not in checkpoint or "class_names" not in checkpoint:
+        raise ValueError("模型文件缺少参数或类别名称，请用当前 train.py 重新训练")
+    parameters = checkpoint["model_state_dict"]
+    class_names = checkpoint["class_names"]
 
     print("参数文件：", MODEL_PATH)
     # 每一项由名称和张量组成，例如 0.weight 对应第 0 层的权重。
@@ -67,11 +62,8 @@ def main():
     model.eval()
     print("参数已成功加载到模型，模型已切换到评估模式。")
 
-    # 图片预处理必须与训练时一致：调整为 64×64，再转换为张量。
-    image_transform = transforms.Compose([
-        transforms.Resize((64, 64)),
-        transforms.ToTensor(),
-    ])
+    # 复用训练时的预处理，避免两处配置逐渐不一致。
+    image_transform = create_image_transform()
     with Image.open(image_path) as image:
         # 与训练时 ImageFolder 的读取方式一致，统一为三个颜色通道。
         image_tensor = image_transform(image.convert("RGB"))

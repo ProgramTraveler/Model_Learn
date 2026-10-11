@@ -2,7 +2,7 @@
 
 这是一个用于记录 PyTorch 与图像分类学习过程的项目。
 
-当前目标是从基础概念开始，逐步完成一个能够识别特定场景图片的分类模型。项目使用 VS Code 开发，主要代码位于 `src/train.py`。
+当前目标是逐步完成机器人前方通道“窄道 / 非窄道”的二分类模型。当前训练入口仍使用原三分类示例数据，等待标注团队确认交付格式并提供数据。项目使用 VS Code 开发，主要代码位于 `src/train.py`。
 
 ## 当前学习内容
 
@@ -18,20 +18,24 @@
 ## 项目结构
 
 ```text
-scene_model/
+Model_Learn/
 ├── learning_scene_dataset/   # 场景图片数据集
 │   ├── train/                # 训练集
 │   └── validation/           # 验证集
 ├── src/
 │   ├── train.py              # 当前训练与学习代码
+│   ├── inspect_parameters.py # 加载模型并预测图片
 │   └── learn_img/            # 学习过程中生成的示意图
+├── requirements.txt         # 已验证的依赖版本
+├── .python-version          # Python 版本
+├── TRAINING_TEMPLATE.md     # 训练流程参考
 ├── .gitignore
 └── README.md
 ```
 
 ## 运行方式
 
-本项目在新电脑上已使用 Python 3.12 配置 `.venv`。依赖版本记录在 `requirements.txt`。如需重新创建环境，请先准备 Python 3.12，再执行：
+本项目使用 Python 3.12 和项目虚拟环境 `.venv`。依赖版本记录在 `requirements.txt`。如需重新创建环境，请先准备 Python 3.12，再执行：
 
 ```bash
 python3.12 -m venv .venv
@@ -41,7 +45,7 @@ python3.12 -m venv .venv
 进入项目目录并激活虚拟环境：
 
 ```bash
-cd /Users/help/code_data/Model_Learn
+cd Model_Learn
 source .venv/bin/activate
 ```
 
@@ -49,9 +53,15 @@ source .venv/bin/activate
 
 ```bash
 python src/train.py
+python src/inspect_parameters.py
 ```
 
 ## 学习进度
+
+### 2026-10-11：环境配置与窄道数据读取起点
+
+已配置 Python 3.12 环境并验证训练与预测。新增 CSV 标注表读取；图片读取方法及窄道训练尚未接入。已精简额外单批次演示、复用预处理，并移除预测脚本中的旧三分类标签兜底。后续学习先修改代码，再逐段解读。
+
 
 ### 2026-09-28：验证准确率与多轮训练
 
