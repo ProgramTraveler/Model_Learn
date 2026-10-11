@@ -1,10 +1,11 @@
+import csv
 from pathlib import Path
 
 # pyplot 用来把每轮记录的指标画成曲线。
 import matplotlib.pyplot as plt
 import torch
 from torch import nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from torchvision import datasets, transforms
 
 # __file__ 表示当前 train.py 文件的位置。
@@ -13,6 +14,26 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATASET_ROOT = PROJECT_ROOT / "learning_scene_dataset"
 TRAIN_DIR = DATASET_ROOT / "train"
 VALIDATION_DIR = DATASET_ROOT / "validation"
+
+
+class NarrowRoadDataset(Dataset):
+    """窄道数据读取的第一步：读取标注表；后续补充图片读取方法。"""
+
+    def __init__(self, csv_path, image_root, transform=None):
+        # 图片路径以这个目录为起点；暂时只保存，尚未加载图片。
+        self.image_root = Path(image_root)
+        # 保存预处理方法，后续读取图片时使用。
+        self.transform = transform
+
+        # CSV 示例列名为 image_path、label，最终按标注团队格式适配。
+        # utf-8-sig 也能处理带 BOM 的 UTF-8 文件。
+        with open(csv_path, newline="", encoding="utf-8-sig") as file:
+            # 每行变成一个字典；CSV 中的 label 目前仍是字符串。
+            self.records = list(csv.DictReader(file))
+
+    def __len__(self):
+        # 标注表中的记录数量就是数据集的样本数量。
+        return len(self.records)
 
 
 def create_data_loaders(batch_size: int = 8):
@@ -265,13 +286,9 @@ def main():
                                total_validation_samples)
 
         # 优先比较准确率；准确率相同时，验证 loss 更低才算更好。
-        is_better = (
-            validation_accuracy > best_validation_accuracy
-            or (
-                validation_accuracy == best_validation_accuracy
-                and average_validation_loss < best_validation_loss
-            )
-        )
+        is_better = (validation_accuracy > best_validation_accuracy
+                     or (validation_accuracy == best_validation_accuracy
+                         and average_validation_loss < best_validation_loss))
         # 两个指标必须一起更新，确保它们来自同一轮。
         if is_better:
             best_validation_accuracy = validation_accuracy
@@ -281,10 +298,11 @@ def main():
             # state_dict() 收集模型的参数和缓冲区，不包含模型结构。
             # 必须在当前最佳轮次立即写入文件，后续训练仍会继续改变参数。
             # 用字典一起保存参数和类别顺序，预测时才能正确解释类别编号。
-            torch.save({
-                "model_state_dict": model.state_dict(),
-                "class_names": class_names,
-            }, best_model_path)
+            torch.save(
+                {
+                    "model_state_dict": model.state_dict(),
+                    "class_names": class_names,
+                }, best_model_path)
             print(f"已保存第 {best_epoch} 轮的最佳模型参数：{best_model_path}")
 
         # 每轮验证结束后追加一次，列表中的第一个数对应第 1 轮。
@@ -311,9 +329,15 @@ def main():
     # 创建画布，宽 8 英寸、高 5 英寸。
     plt.figure(figsize=(8, 5))
     # 将每轮训练 loss 连成曲线，圆点标出每轮的实际数值。
-    plt.plot(epoch_numbers, training_loss_history, marker="o", label="Train loss")
+    plt.plot(epoch_numbers,
+             training_loss_history,
+             marker="o",
+             label="Train loss")
     # 在同一张图上绘制验证 loss，方便与训练 loss 比较。
-    plt.plot(epoch_numbers, validation_loss_history, marker="o", label="Validation loss")
+    plt.plot(epoch_numbers,
+             validation_loss_history,
+             marker="o",
+             label="Validation loss")
     # 使用英文坐标标签，避免本机缺少中文字体时显示方框。
     plt.xlabel("Epoch")
     plt.ylabel("Loss")

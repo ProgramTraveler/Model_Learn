@@ -31,10 +31,17 @@ scene_model/
 
 ## 运行方式
 
+本项目在新电脑上已使用 Python 3.12 配置 `.venv`。依赖版本记录在 `requirements.txt`。如需重新创建环境，请先准备 Python 3.12，再执行：
+
+```bash
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+```
+
 进入项目目录并激活虚拟环境：
 
 ```bash
-cd /Users/zhuanz/Documents/learn/scene_model
+cd /Users/help/code_data/Model_Learn
 source .venv/bin/activate
 ```
 

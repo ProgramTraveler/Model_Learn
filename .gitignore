@@ -25,3 +25,6 @@ venv/
 
 # vscode 配置
 .vscode/
+
+# 训练运行生成的曲线
+/training_loss.png
