@@ -28,7 +28,7 @@ Model_Learn/
 │   └── learn_img/            # 学习过程中生成的示意图
 ├── requirements.txt         # 已验证的依赖版本
 ├── .python-version          # Python 版本
-├── TRAINING_TEMPLATE.md     # 训练流程参考
+├── TRAINING_TEMPLATE.md     # 可套用的操作模板
 ├── .gitignore
 └── README.md
 ```
@@ -57,6 +57,9 @@ python src/inspect_parameters.py
 ```
 
 ## 窄道二分类：直接运行
+
+想直接套用数据交付、训练、预测和实验记录模板，请先看 [TRAINING_TEMPLATE.md](TRAINING_TEMPLATE.md)。 若想直接套用完整训练代码，可用 [训练代码模板](templates/train_narrow.py)；单图预测可用 [预测模板](templates/predict_narrow.py)。
+
 
 CSV 格式暂定为 `image_path,label`，支持 UTF-8 或带 BOM 的 UTF-8，可选 `sequence_id`。
 图片相对路径以 `--image-root` 为起点；标注必须是整数 0 或 1。

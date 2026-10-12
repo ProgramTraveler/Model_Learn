@@ -1,124 +1,141 @@
-# PyTorch 场景图像分类训练模板
+# 窄道二分类：照着做的模板
 
-本模板根据本项目 `src/train.py` 整理，供以后构建类似的场景识别模型时参考。适用于**一张图片对应一个类别**的监督分类任务，例如把场景图片分成室内、街道、树林。
+这份手册对应当前的 `src/train.py` 和 `src/inspect_parameters.py`。照顺序完成即可；目前无需改模型代码。所有命令从 `Model_Learn` 项目根目录运行。
 
-这里固定的是训练流程。数据、类别和模型结构需要根据任务调整；它不是适合所有场景的通用最优模型，也不适用于直接输出物体位置的目标检测任务。
+## 最省事的用法：改配置区，运行 Python 模板
 
-## 1. 使用方式与数据准备
+如果不想每次输入整条命令，直接使用仓库中的两个代码模板：
 
-代码按保存到项目的 `src/train.py` 设计，因此 `Path(__file__).resolve().parent.parent` 指向项目根目录。本文整理现有代码的使用方式和训练流程。
+1. 打开 [`templates/train_narrow.py`](templates/train_narrow.py)，填写 `LABEL_0`、`LABEL_1`，核对数据路径和实验名称；运行 `python templates/train_narrow.py`。这是一份包含数据读取、模型、训练、验证和保存的完整代码模板。
+2. 打开 [`templates/predict_narrow.py`](templates/predict_narrow.py)，填写实验名称和待预测图片路径；运行 `python templates/predict_narrow.py`。
 
-当前代码沿用简单 CNN、CPU 计算、SGD 和 10 轮训练。单批次教学演示已移除，模型从初始化参数开始正式训练。
+训练模板本身包含完整流程，可直接阅读和修改；预测模板调用 `src/inspect_parameters.py`。下面保留命令行版训练方式，供你按需要选择。
 
-数据目录示例（类别名称可以更换）：
+## 模板 1：向标注团队确认交付内容
+
+把下面这段发给标注团队，收到答复后填写方括号：
+
+> 任务：根据机器人前向相机图片，判断机器人前方通道是否狭窄。请提供原图、训练集 CSV 和验证集 CSV。CSV 至少包含 `image_path,label` 两列，label 只能是 0 或 1。请确认 **0 = [类别]、1 = [类别]**，以及窄道的标注标准：[机器人宽度、两侧余量、观察区域、遮挡时的处理方式]。如图片来自视频或连续采集，请在两份 CSV 中都加 `sequence_id`，相同采集序列只放在同一个集合。请说明每类在训练集、验证集中的图片数量。
+
+实际收到的数据若不是这种 CSV 格式，先按交付格式调整读取代码，不要只改文件后缀。
+
+## 模板 2：放置数据
+
+把交付文件整理为：
 
 ```text
 Model_Learn/
-├── src/
-│   └── train.py
-└── learning_scene_dataset/
-    ├── train/
-    │   ├── indoor/
-    │   ├── street/
-    │   └── forest/
-    └── validation/
-        ├── indoor/
-        ├── street/
-        └── forest/
+└── narrow_road_dataset/
+    ├── train.csv
+    ├── validation.csv
+    └── images/
+        ├── image_001.jpg
+        ├── image_002.jpg
+        └── ...
 ```
 
-每个类别文件夹放入该类别的图片，训练集和验证集都必须有图片，并使用相同的类别文件夹名称。`ImageFolder` 自动建立类别编号；不要自行假设编号顺序，以返回的 `class_names` 为准。
+CSV 中 `image_path` 从 `narrow_road_dataset/` 开始计算，例如：
 
-训练与验证应使用分开的图片。同一张图片及其近似副本不要同时放入两边，否则验证结果可能过于乐观。
+```csv
+image_path,label,sequence_id
+images/image_001.jpg,1,run_001
+images/image_002.jpg,0,run_002
+```
 
-## 2. 训练代码入口
+`sequence_id` 是可选列；如果使用，两份 CSV 都应提供。每份 CSV 都要有 0 和 1 两类图片。训练集与验证集不要共享图片，也不要把同一视频的相邻帧分到两边。数据目录默认被 Git 忽略。
 
-实际代码以 `src/train.py` 为准，避免维护两份重复的完整程序。
+## 模板 3：训练
 
-- `create_image_transform()`：训练和预测共用的图片预处理。
-- `create_data_loaders()`：读取当前场景数据集。
-- `create_model()`：创建 CNN。
-- `main()`：解析命令行参数，多轮训练、验证、保存最佳参数与指标。
-- `run_epoch()`：执行一轮训练或验证，汇总 loss 和混淆矩阵。
-- `NarrowRoadDataset`：窄道 CSV 的标注校验和图片读取；已接入命令行训练。
-
-## 3. 换一个识别场景时，修改哪里
-
-| 内容 | 当前设置 | 如何调整 |
-| --- | --- | --- |
-| 数据路径 | `learning_scene_dataset` | 修改 `DATASET_ROOT`，指向新数据集 |
-| 类别 | 根据子文件夹自动读取 | 更换两份数据集的类别文件夹，输出类别数自动跟随 |
-| 批次大小 | `batch_size=8` | 使用 `--batch-size` |
-| 训练轮数 | `--epochs 10` | 根据训练和验证表现调整 |
-| 学习率 | `lr=0.01` | 使用 `--lr` 调整，过大可能导致训练不稳定 |
-| 输入图片尺寸 | `64×64` | 修改 `Resize`，并同步修改全连接层的 `in_features` |
-| 模型结构 | 一层卷积，8 个特征通道 | 在 `create_model()` 中调整，并检查后续层的输入形状 |
-
-当前形状变化为：`[批次, 3, 64, 64] → [批次, 8, 64, 64] → [批次, 8, 32, 32] → [批次, 8192] → [批次, 类别数]`。因此不能只改图片大小而不检查 `8 * 32 * 32`。
-
-## 4. 固定流程与放置位置
-
-| 位置 | 操作 | 原因 |
-| --- | --- | --- |
-| epoch 循环之前 | 创建加载器、模型、损失函数和优化器 | 模型参数持续学习，不每轮重新初始化 |
-| epoch 循环之前 | 初始化历史列表、最佳指标及保存路径 | 跨轮次保留记录 |
-| 每轮训练开始 | `model.train()`，清零训练统计 | 从上一轮验证模式切回训练模式，只统计本轮 |
-| 每个训练批次 | `zero_grad → 预测 → loss → backward → step` | 清除旧梯度，计算本批梯度，再更新参数 |
-| 每个训练批次末尾 | 累计 `平均 loss × 实际批次大小` 和样本数 | 正确处理最后一个批次数量不足的情况 |
-| 训练批次循环结束 | 计算整轮平均训练 loss | 总 loss 除以总样本数 |
-| 每轮验证开始 | `model.eval()`，清零验证统计 | 检查本轮训练后的模型表现 |
-| 验证代码块 | `torch.no_grad()`，遍历验证集 | 预测并统计指标，不记录反向传播所需过程 |
-| 每轮验证结束 | 计算平均验证 loss 和准确率，追加到历史列表 | 观察并保留本轮验证结果 |
-| 每轮指标计算之后 | 判断 `is_better`，更新最佳指标和轮次，并保存参数 | 准确率优先，同分比较 loss；完全相同则保留较早轮次 |
-| epoch 循环之后 | 输出最佳指标并保存 loss 曲线 | 汇总本次训练结果 |
-
-### 今天学到的关键区别
-
-- **权重与梯度**：权重保留学习成果；梯度指导本次更新。`zero_grad()` 清除梯度，不清除权重。
-- **反向传播与更新**：`backward()` 计算梯度；普通 SGD 的 `step()` 按“新参数 = 旧参数 − 学习率 × 梯度”更新参数。
-- **模式与梯度记录**：`eval()` 切换某些层的行为，不会自动关闭梯度记录；`no_grad()` 关闭梯度记录，不会切换模型模式。当前 CNN 的各层在 train/eval 模式下行为相同，但加入 Dropout 或 BatchNorm 后就有区别。
-- **验证阶段**：仍可以预测和计算 loss，但不调用 `backward()` 和 `step()`。`no_grad()` 是省去不必要记录的做法，不是验证能运行的硬性条件。
-- **梯度累积**：本模板每批更新一次，所以每批清除梯度。有意累积梯度时，需要另行设计多个批次后再更新的流程，并合理缩放 loss。
-- **训练 loss**：累计各批次更新前算出的 loss，反映一轮中的学习过程；验证 loss 使用这一轮训练结束后的同一套参数。
-- **准确率**：`argmax(dim=1)` 选出每张图片分数最高的类别，再用“预测正确数量 / 总样本数”计算准确率。
-
-## 5. 运行与结果
-
-模板默认通过 `--seed 42` 设置随机种子，并调用 `torch.manual_seed(args.seed)` 固定 PyTorch 随机数的起点，影响模型参数初始化和当前加载器的数据打乱。`42` 只是一个约定的整数，不会让模型更准确。固定种子便于在相同环境、数据和执行流程下比较实验，不保证跨设备或 PyTorch 版本得到完全相同的结果。
-
-移除额外单批次更新后，训练起点和数据加载顺序发生变化，因此结果可能与早期学习记录不同。
-
-在项目根目录运行：
+打开 VS Code 终端，进入项目目录并激活已创建的环境：
 
 ```bash
-# 激活本项目已有的虚拟环境。
+cd /Users/help/code_data/Model_Learn
 source .venv/bin/activate
-
-# 启动训练，每轮输出训练 loss、验证 loss 和验证准确率。
-python src/train.py
 ```
 
-loss 越低通常说明预测分数与正确标签越匹配，但不保证每轮都下降；验证准确率反映当前验证集的分类结果。较小验证集上的 100% 准确率不代表面对所有新图片都能正确识别。
+确认团队给出的标签映射，然后**只选下面一条**。不要猜测 0 和 1 的含义。
 
-运行后，项目根目录会产生以下文件：
-
-所有结果保存在输出目录（默认 `outputs/scene_model/` 或 `outputs/narrow_road/`）。
-
-- `best_model.pth`：字典中的 `model_state_dict` 保存最佳模型参数和缓冲区，`class_names` 保存训练时的类别顺序。准确率更高，或准确率相同且 loss 更低时覆盖保存；重新运行训练也会覆盖该文件。
-- `training_loss.png`：各轮训练与验证 loss 曲线，重新运行时覆盖。
-
-最佳准确率、对应 loss 和轮次会在终端输出。历史指标列表仅保留在本次运行的内存中；图片展示的是 loss 曲线，不包含准确率曲线。
-
-`.pth` 是二进制文件，包含参数和类别名称，但不包含模型结构或优化器状态。加载时需要创建相同结构的模型，再把字典中的 `model_state_dict` 传给 `load_state_dict()`。当前项目的 `src/inspect_parameters.py` 已实现参数查看、加载及单张图片预测，可在项目根目录运行：
+团队确认 **0=非窄道、1=窄道** 时：
 
 ```bash
-# 默认预测 sample_scene.png。
-python src/inspect_parameters.py
-
-# 也可以指定图片路径。
-python src/inspect_parameters.py "/完整路径/你的图片.jpg"
+python src/train.py \
+  --train-csv narrow_road_dataset/train.csv \
+  --validation-csv narrow_road_dataset/validation.csv \
+  --image-root narrow_road_dataset \
+  --class-names non_narrow narrow \
+  --epochs 10 --batch-size 8 --lr 0.01 \
+  --output-dir outputs/narrow_road/experiment_01
 ```
 
-预测脚本从模型文件的 `class_names` 读取类别顺序。旧的纯参数文件不再支持，应重新训练并保存带类别名称的格式。预测时的模型结构和图片预处理仍必须与训练时一致。
+团队确认 **0=窄道、1=非窄道** 时：
 
-CSV 二分类数据约定、最新运行命令和输出路径请参照 README 的“窄道二分类：直接运行”。
+```bash
+python src/train.py \
+  --train-csv narrow_road_dataset/train.csv \
+  --validation-csv narrow_road_dataset/validation.csv \
+  --image-root narrow_road_dataset \
+  --class-names narrow non_narrow \
+  --epochs 10 --batch-size 8 --lr 0.01 \
+  --output-dir outputs/narrow_road/experiment_01
+```
+
+换一批数据或参数时，将 `experiment_01` 改成 `experiment_02` 等。重用同一个输出目录会覆盖其中的模型、历史记录和曲线。训练命令中 `--class-names` 的第一个名称对应 label 0，第二个对应 label 1。
+
+## 模板 4：查看训练结果
+
+完成后打开刚才指定的输出目录：
+
+| 文件 | 用途 |
+| --- | --- |
+| `best_model.pth` | 预测时加载的模型；按验证准确率优先、同分时按验证 loss 选出 |
+| `history.json` | 每一轮的训练 loss、验证 loss、准确率、各类 precision/recall 和混淆矩阵 |
+| `training_loss.png` | 训练与验证 loss 曲线 |
+
+先查看 `history.json` 各轮记录，尤其看 `class_metrics.narrow.recall`：它低时，验证集中的窄道漏判较多。`confusion_matrix` 的行是真实类别、列是预测类别，顺序与命令中的 `--class-names` 一致。结果来自当前验证集，不代表机器人在新场景中的真实表现。
+
+## 模板 5：预测一张新图片
+
+将新图片放在本机任意可读取的位置，并替换下面的图片路径。模型路径须与训练时的 `--output-dir` 一致：
+
+```bash
+python src/inspect_parameters.py /完整路径/待预测图片.jpg \
+  --model outputs/narrow_road/experiment_01/best_model.pth
+```
+
+终端会显示类别顺序、各类分数与预测类别。此预测只用于离线检查；当前代码不直接连接机器人控制系统。
+
+## 模板 6：常见问题直接对照
+
+| 看到的情况 | 检查动作 |
+| --- | --- |
+| `No module named ...` | 在项目目录执行 `source .venv/bin/activate`，再运行命令 |
+| `必须包含 image_path、label` | 检查 CSV 第一行列名，拼写须完全一致 |
+| `找不到图片` | 用 `--image-root` 加上 CSV 的 `image_path` 核对实际路径 |
+| `label 必须为 0 或 1` | 请团队确认并统一标签值，不要私自猜测或重映射 |
+| `训练集和验证集包含相同...` | 按图片或采集序列重新划分数据，保留独立验证集 |
+| 预测显示的类别反了 | 核对团队的 0/1 定义与训练时 `--class-names` 的顺序；修正后重新训练 |
+| 运行 `python src/train.py` 得到三分类 | 窄道训练须使用模板 3 的完整 CSV 命令 |
+| 找不到模型文件 | 检查训练输出目录，并让 `--model` 指向其中的 `best_model.pth` |
+
+## 每次实验的记录模板
+
+复制下面这段，填入真实值，方便比较实验：
+
+```text
+实验名称：experiment_01
+数据来源与采集日期：
+机器人及相机：
+窄道标注标准：
+标签映射：0 = ______；1 = ______
+训练 CSV / 图片数：
+验证 CSV / 图片数：
+是否按采集序列隔离：
+训练命令：
+模型输出目录：
+最佳 epoch / 验证准确率：
+narrow precision / recall：
+典型漏判图片：
+下一步动作：
+```
+
+当前 `64×64` CNN 是学习基线。真实数据到位后，先按上述流程完成一次可复现的离线实验，再用独立场景检查效果。
