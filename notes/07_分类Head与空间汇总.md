@@ -256,6 +256,12 @@ loss_cls 与 total_loss 图形近乎一致，平滑趋势约从0.68下降到0.42
 
 <a id="pooling-choice"></a>
 
+相同均值但布局不同的具体数值例子，见[09：空间布局与池化](09_窄道分类基线与方案验证.md#pooling-layout-example)。
+
+
+将池化假设落实为固定特征来源下的head对照，见[09：从问题假设形成候选](09_窄道分类基线与方案验证.md#head-hypothesis-experiment)。
+
+
 ### 2.15 实际设计中怎样选择池化
 
 池化候选如何从训练与验证的场景表现提出，见 [09：可比评估与场景诊断](09_窄道分类基线与方案验证.md#train-validation-diagnosis)。
